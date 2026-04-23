@@ -5,24 +5,21 @@ import re
 import time
 import platform
 import ctypes
+from tempfile import TemporaryDirectory
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Optional
-from uuid import uuid4
 
 from dotenv import load_dotenv
 from playwright.sync_api import (
     BrowserContext,
-    Error,
     TimeoutError as PlaywrightTimeoutError,
     Page,
     sync_playwright,
 )
 
 PORTAL_URL = "https://www.portaldoservidor.mg.gov.br/"
-CONTRACHEQUE_URL = "https://www.portaldoservidor.mg.gov.br/contracheque"
-STATE_DIR = "playwright_state_portal_mg"
 
 
 @dataclass(frozen=True)
@@ -120,9 +117,8 @@ def extrair_info_documento(texto: str) -> DocumentoInfo:
     )
 
 
-def iniciar_contexto(playwright, download_dir: Path) -> BrowserContext:
-    user_data_dir = str((Path(STATE_DIR) / f"profile_{uuid4().hex}").resolve())
-    user_data_dir = caminho_curto_windows(user_data_dir)
+def iniciar_contexto(playwright, download_dir: Path, user_data_dir: Path) -> BrowserContext:
+    user_data_dir = caminho_curto_windows(str(user_data_dir.resolve()))
     downloads_path = caminho_curto_windows(str(download_dir))
 
     return playwright.chromium.launch_persistent_context(
@@ -633,52 +629,53 @@ def main() -> int:
     vistos: set[str] = set()
 
     with sync_playwright() as playwright:
-        print("Iniciando navegador...")
-        context = iniciar_contexto(playwright, download_dir)
-        page = context.pages[0] if context.pages else context.new_page()
+        with TemporaryDirectory(prefix="portal_mg_profile_") as perfil_temporario:
+            print("Iniciando navegador...")
+            context = iniciar_contexto(playwright, download_dir, Path(perfil_temporario))
+            page = context.pages[0] if context.pages else context.new_page()
 
-        try:
-            print("Abrindo portal...")
-            abrir_portal_e_autenticar(page, cpf, senha)
-            print("Verificando lista de contracheques...")
-            _ = ir_para_lista_de_contracheques(page)
-
-            total = 0
-            pagina = 1
-
-            while True:
-                print(f"\nProcessando página {pagina}...")
-                page = encontrar_pagina_com_lista_flexivel(page)
-                baixados_nesta_pagina = processar_pagina(page, pasta_mensais, pasta_decimo, vistos)
-                total += baixados_nesta_pagina
-
-                avancou = ir_para_proxima_pagina(page)
-                if not avancou:
-                    break
-
-                pagina += 1
-
-            print(f"\nConcluído. Total de arquivos baixados: {total}")
-            print(f"Mensais: {pasta_mensais}")
-            print(f"13º: {pasta_decimo}")
-
-        except Exception as e:
-            print(f"\nERRO NO SCRIPT: {e}")
             try:
-                print(f"URL atual: {page.url}")
-            except Exception:
-                pass
-            try:
-                input("O navegador ficará aberto. Pressione ENTER para fechar...")
-            except Exception:
-                pass
+                print("Abrindo portal...")
+                abrir_portal_e_autenticar(page, cpf, senha)
+                print("Verificando lista de contracheques...")
+                _ = ir_para_lista_de_contracheques(page)
 
-        finally:
-            try:
-                input("\nPressione ENTER para fechar o navegador...")
-            except Exception:
-                pass
-            context.close()
+                total = 0
+                pagina = 1
+
+                while True:
+                    print(f"\nProcessando página {pagina}...")
+                    page = encontrar_pagina_com_lista_flexivel(page)
+                    baixados_nesta_pagina = processar_pagina(page, pasta_mensais, pasta_decimo, vistos)
+                    total += baixados_nesta_pagina
+
+                    avancou = ir_para_proxima_pagina(page)
+                    if not avancou:
+                        break
+
+                    pagina += 1
+
+                print(f"\nConcluído. Total de arquivos baixados: {total}")
+                print(f"Mensais: {pasta_mensais}")
+                print(f"13º: {pasta_decimo}")
+
+            except Exception as e:
+                print(f"\nERRO NO SCRIPT: {e}")
+                try:
+                    print(f"URL atual: {page.url}")
+                except Exception:
+                    pass
+                try:
+                    input("O navegador ficará aberto. Pressione ENTER para fechar...")
+                except Exception:
+                    pass
+
+            finally:
+                try:
+                    input("\nPressione ENTER para fechar o navegador...")
+                except Exception:
+                    pass
+                context.close()
 
     return 0
 
